@@ -1,0 +1,49 @@
+# ============================
+# Secure Electronic Voting System – .gitignore
+# Stack: React/Vite + Flask + Node.js (TypeScript) + PostgreSQL
+# ============================
+
+# ── Environment variables (NEVER commit secrets) ─────────────
+.env
+.env.*
+!.env.example
+
+# ── Node.js (Frontend + voting-core) ─────────────────────────
+node_modules/
+dist/
+build/
+
+# ── Python (Flask backend) ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.whl
+*.log
+pip_error.log
+
+# ── Biometric data (SENSITIVE – never commit raw face data) ──
+face_data/
+encodings/
+
+# ── Database backups & dumps ──────────────────────────────────
+backups/
+*.sql
+
+# ── OS / Editor artifacts ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+
+# ── SSL Certificates ─────────────────────────────────────────
+devops/ssl/certs/*.key
+devops/ssl/certs/*.csr
+devops/ssl/certs/ca.*
+
+# ── Temporary scratch files ───────────────────────────────────
+app1.py
+test1.py
+fix_env.sh

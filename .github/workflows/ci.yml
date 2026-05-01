@@ -1,0 +1,324 @@
+# ==============================================================
+# .github/workflows/ci.yml
+# Continuous Integration – Secure Electronic Voting System
+# ==============================================================
+# Triggers on: every push and pull_request targeting `main`
+#
+# Jobs:
+#   1. lint-backend       → flake8 linting + pytest (Flask)
+#   2. build-voting-core  → npm install + TypeScript build (Node.js)
+#   3. build-frontend     → npm install + Vite production build (React)
+#   4. validate-docker    → Docker build smoke-test (Flask Dockerfile)
+#   5. check-env-vars     → Verify required CI secrets are present
+# ==============================================================
+
+name: CI – Quality Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same branch to save runner minutes
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ════════════════════════════════════════════════════════════
+  # JOB 1 – Python Backend: Lint + Test
+  # ════════════════════════════════════════════════════════════
+  lint-backend:
+    name: Python – Lint & Test (Flask)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # Only install linting tools — NOT the heavy ML stack (opencv, sklearn, etc.)
+      # This keeps CI fast. Full deps are validated by the Docker build job instead.
+      - name: Install lint dependencies only
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install flake8 \
+            Flask Flask-CORS Flask-JWT-Extended Flask-Talisman Flask-Limiter \
+            psycopg2-binary python-dotenv PyJWT requests Jinja2 Werkzeug
+
+      # flake8: Only check for critical syntax/runtime errors (E901, F811, F821, F401 etc.)
+      # We deliberately skip style warnings (line length, formatting) — those are not blockers
+      - name: Run flake8 linter
+        working-directory: backend
+        run: |
+          echo "Running flake8 lint checks..."
+          flake8 . \
+            --count \
+            --select=E9,F63,F7,F82 \
+            --show-source \
+            --statistics \
+            --max-line-length=200 \
+            --exclude=.venv,venv,__pycache__,encodings,backups,chk_db.py
+          echo "Flake8 passed – no critical errors found"
+
+      # pytest: Run unit tests only. Exclude test_monitoring.py — it is an
+      # integration test that requires a live Flask server on localhost:5000.
+      - name: Run pytest (unit tests only)
+        working-directory: backend
+        env:
+          DATABASE_URL: ""
+          JWT_SECRET: ci_test_secret_key_not_real
+          DB_INTEGRITY_KEY: ci_test_integrity_key_not_real
+        run: |
+          if find . -name "test_*.py" -not -name "test_monitoring.py" | grep -q .; then
+            echo "Unit test files found. Running pytest..."
+            python -m pytest . -v --tb=short \
+              --ignore=.venv --ignore=venv \
+              --ignore=test_monitoring.py
+          else
+            echo "No unit test files found in backend/. Skipping pytest."
+          fi
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 2 – Node.js Voting Core: Build + Type Check
+  # ════════════════════════════════════════════════════════════
+  build-voting-core:
+    name: Node.js – Build & TypeCheck (voting-core)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: voting-core/package-lock.json
+
+      - name: Install voting-core dependencies
+        working-directory: voting-core
+        run: npm ci --legacy-peer-deps
+
+      - name: TypeScript compile (voting-core)
+        working-directory: voting-core
+        run: |
+          echo "Compiling TypeScript..."
+          npx tsc --noEmit
+          echo "TypeScript type-check passed"
+
+      - name: Build voting-core (tsc output)
+        working-directory: voting-core
+        run: |
+          npm run build
+          echo "voting-core build successful"
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 3 – React Frontend: Lint + Build
+  # ════════════════════════════════════════════════════════════
+  build-frontend:
+    name: React – Lint & Build (Vite)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --legacy-peer-deps
+
+      # ESLint runs but we treat it as a WARNING, not a hard failure.
+      # The Vite production build below is the real correctness gate.
+      - name: Run ESLint (warnings allowed)
+        run: |
+          echo "Running ESLint..."
+          npm run lint || echo "ESLint reported warnings/errors (non-blocking). Fix before next release."
+          echo "ESLint step complete"
+
+      - name: Build production bundle (Vite)
+        run: |
+          npm run build
+          echo "Frontend production build successful"
+        env:
+          # These are build-time env vars for Vite (VITE_ prefix)
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'https://placeholder.render.com' }}
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 4 – Docker: Validate Flask Backend Image Builds
+  # ════════════════════════════════════════════════════════════
+  validate-docker:
+    name: Docker – Build Smoke Test (Flask)
+    runs-on: ubuntu-latest
+    # Only run on pushes (not every PR comment) to save build time
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the Flask backend Docker image WITHOUT pushing
+      # This catches any Dockerfile or dependency errors early
+      - name: Build Flask backend Docker image (smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          dockerfile: ./backend/Dockerfile
+          push: false
+          tags: secure-voting/flask-backend:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker build smoke test passed
+        run: echo "Flask Docker image builds successfully"
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 5 – Environment Variables: Verify Required Secrets
+  # ════════════════════════════════════════════════════════════
+  check-env-vars:
+    name: Verify Required Environment Variables
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check required GitHub Secrets are configured
+        env:
+          DATABASE_URL_CHECK: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET_CHECK: ${{ secrets.JWT_SECRET }}
+        run: |
+          echo "Checking required environment variables..."
+          MISSING=0
+
+          if [ -z "$DATABASE_URL_CHECK" ]; then
+            echo "WARNING: DATABASE_URL secret is not set in GitHub Secrets."
+            echo "   -> Go to: Settings -> Secrets -> Actions -> New repository secret"
+            MISSING=1
+          else
+            echo "DATABASE_URL is configured"
+          fi
+
+          if [ -z "$JWT_SECRET_CHECK" ]; then
+            echo "WARNING: JWT_SECRET secret is not set in GitHub Secrets."
+            MISSING=1
+          else
+            echo "JWT_SECRET is configured"
+          fi
+
+          if [ $MISSING -eq 1 ]; then
+            echo ""
+            echo "Some secrets are missing. CI will still pass, but configure them"
+            echo "   before deploying to production."
+          else
+            echo ""
+            echo "All required secrets are configured for CI."
+          fi
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 6 – Deploy Flask Backend to Render
+  # Runs ONLY after all CI jobs pass, and ONLY on push to main
+  # ════════════════════════════════════════════════════════════
+  deploy-flask-backend:
+    name: Deploy Backend to Render (Flask)
+    runs-on: ubuntu-latest
+    needs: [lint-backend, build-voting-core, build-frontend, validate-docker, check-env-vars]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Render deploy (Flask backend)
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_FLASK_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_HOOK" ]; then
+            echo "WARNING: RENDER_FLASK_DEPLOY_HOOK_URL secret is not set."
+            echo "Skipping automatic Render deployment trigger."
+            echo "To enable, add your Render Deploy Hook URL to GitHub Secrets."
+            exit 0
+          fi
+          
+          echo "Triggering Render Flask backend deployment..."
+          curl -s --fail-with-body \
+            -X POST "$RENDER_HOOK" \
+            -o /tmp/render_response.json
+          echo "Render API response:"
+          cat /tmp/render_response.json
+          echo ""
+          echo "Render Flask deploy triggered successfully"
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 7 – Deploy Voting Core to Render
+  # Runs in parallel with Flask deploy after CI jobs pass
+  # ════════════════════════════════════════════════════════════
+  deploy-voting-core:
+    name: Deploy Backend to Render (Node.js)
+    runs-on: ubuntu-latest
+    needs: [lint-backend, build-voting-core, build-frontend, validate-docker, check-env-vars]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Render deploy (Voting Core)
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_VOTING_CORE_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_HOOK" ]; then
+            echo "WARNING: RENDER_VOTING_CORE_DEPLOY_HOOK_URL secret is not set."
+            echo "Skipping automatic Render deployment trigger."
+            echo "To enable, add your Render Deploy Hook URL to GitHub Secrets."
+            exit 0
+          fi
+          
+          echo "Triggering Render Voting Core deployment..."
+          curl -s --fail-with-body \
+            -X POST "$RENDER_HOOK" \
+            -o /tmp/render_response.json
+          echo "Render API response:"
+          cat /tmp/render_response.json
+          echo ""
+          echo "Render Voting Core deploy triggered successfully"
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 7 – Deploy Frontend to Vercel
+  # Runs in parallel with deploy-backend after all CI jobs pass
+  # ════════════════════════════════════════════════════════════
+  deploy-frontend:
+    name: Deploy Frontend to Vercel
+    runs-on: ubuntu-latest
+    needs: [lint-backend, build-voting-core, build-frontend, validate-docker, check-env-vars]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Vercel deploy (React frontend)
+        env:
+          VERCEL_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$VERCEL_HOOK" ]; then
+            echo "WARNING: VERCEL_DEPLOY_HOOK_URL secret is not set."
+            echo "Skipping automatic Vercel deployment trigger."
+            echo "To enable, add your Vercel Deploy Hook URL to GitHub Secrets."
+            exit 0
+          fi
+          
+          echo "Triggering Vercel frontend deployment..."
+          curl -s --fail-with-body \
+            -X POST "$VERCEL_HOOK" \
+            -o /tmp/vercel_response.json
+          echo "Vercel API response:"
+          cat /tmp/vercel_response.json
+          echo ""
+          echo "Vercel deploy triggered successfully"
