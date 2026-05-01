@@ -1,0 +1,237 @@
+import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Shield, Menu, Vote, LayoutDashboard, Lock, User, LogOut } from "lucide-react";
+
+const navigation = [
+  { name: "Home", href: "/" },
+  { name: "How It Works", href: "/how-it-works" },
+  { name: "FAQ", href: "/faq" },
+  { name: "Security", href: "/security" },
+];
+
+export function Header() {
+  const [isOpen, setIsOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const voterToken = localStorage.getItem("voterToken");
+  const adminToken = localStorage.getItem("token");
+
+  const isActive = (path: string) => location.pathname === path;
+
+  const handleVoterLogout = () => {
+    localStorage.removeItem("voterToken");
+    navigate("/login");
+  };
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem("token");
+    navigate("/admin/login");
+  };
+
+  return (
+    <header className="sticky top-0 z-50 w-full bg-white shadow-sm border-t-[4px] border-t-primary-700 font-sans">
+      <div className="container flex h-20 items-center justify-between">
+        {/* Logo Section */}
+        <Link to="/" className="flex items-center gap-3 group">
+          <div className="relative flex items-center justify-center">
+            <Shield
+              className="h-10 w-10 text-primary-700 fill-primary-50"
+              strokeWidth={1.5}
+            />
+            <Vote className="h-4 w-4 text-primary-900 absolute" />
+          </div>
+          <div className="flex flex-col">
+            <span className="font-display text-xl font-bold text-neutral-900 leading-none tracking-tight">
+              SCV
+            </span>
+            <span className="text-[11px] text-neutral-600 uppercase tracking-widest font-semibold mt-1">
+              Secure Vote
+            </span>
+          </div>
+        </Link>
+
+        {/* Desktop Navigation */}
+        <nav className="hidden md:flex items-center gap-6">
+          {navigation.map((item) => (
+            <Link
+              key={item.name}
+              to={item.href}
+              className={`relative px-1 py-1 text-sm font-bold uppercase tracking-wide transition-colors ${isActive(item.href)
+                ? "text-primary-700"
+                : "text-neutral-600 hover:text-primary-700"
+                }`}
+            >
+              {item.name}
+              {isActive(item.href) && (
+                <motion.div
+                  layoutId="activeNav"
+                  className="absolute bottom-[-4px] left-0 w-full h-[2px] bg-primary-700"
+                />
+              )}
+            </Link>
+          ))}
+        </nav>
+
+        {/* Desktop Auth Buttons */}
+        <div className="hidden md:flex items-center gap-3">
+          {adminToken ? (
+            <>
+              <Link to="/dashboard/admin">
+                <Button variant="ghost" size="sm" className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider gap-2">
+                  <LayoutDashboard className="h-3 w-3" />
+                  Admin Dashboard
+                </Button>
+              </Link>
+              <Button onClick={handleAdminLogout} variant="ghost" size="sm" className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider gap-2">
+                <LogOut className="h-3 w-3" />
+                Logout
+              </Button>
+            </>
+          ) : voterToken ? (
+            <>
+              <Link to="/dashboard/voter">
+                <Button variant="ghost" size="sm" className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider gap-2">
+                  <User className="h-3 w-3" />
+                  User Profile
+                </Button>
+              </Link>
+              <Button onClick={handleVoterLogout} variant="ghost" size="sm" className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider gap-2">
+                <LogOut className="h-3 w-3" />
+                Logout
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Subtle Admin Portal Link */}
+              <Link to="/admin/login">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider gap-2"
+                >
+                  <Lock className="h-3 w-3" />
+                  Admin Portal
+                </Button>
+              </Link>
+              <div className="h-6 w-[1px] bg-neutral-200 mx-1" /> {/* Divider */}
+              <Link to="/login">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="font-semibold text-neutral-700 hover:bg-neutral-100 uppercase text-xs tracking-wider"
+                >
+                  Login
+                </Button>
+              </Link>
+              <Link to="/register">
+                <Button className="bg-primary-700 hover:bg-primary-800 text-white font-bold uppercase text-xs tracking-wider px-6 rounded-sm shadow-sm transition-all">
+                  Register
+                </Button>
+              </Link>
+            </>
+          )}
+        </div>
+
+        {/* Mobile Menu */}
+        <Sheet open={isOpen} onOpenChange={setIsOpen}>
+          <SheetTrigger asChild className="md:hidden">
+            <Button variant="ghost" size="icon">
+              <Menu className="h-6 w-6 text-neutral-700" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent
+            side="right"
+            className="w-[300px] bg-white border-l-primary-700 border-l-4"
+          >
+            <div className="flex flex-col gap-8 mt-8">
+              <div className="flex items-center gap-2 pb-4 border-b border-neutral-200">
+                <Shield className="h-8 w-8 text-primary-700" />
+                <span className="font-display font-bold text-lg">
+                  Official Menu
+                </span>
+              </div>
+
+              <nav className="flex flex-col gap-4">
+                {navigation.map((item) => (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className={`px-4 py-3 text-sm font-bold uppercase tracking-wide border-l-2 transition-all ${isActive(item.href)
+                      ? "text-primary-700 border-primary-700 bg-primary-50"
+                      : "text-neutral-600 border-transparent hover:bg-neutral-50"
+                      }`}
+                  >
+                    {item.name}
+                  </Link>
+                ))}
+              </nav>
+
+              <div className="flex flex-col gap-3 pt-4 border-t border-neutral-100">
+                {adminToken ? (
+                  <>
+                    <Link to="/dashboard/admin" onClick={() => setIsOpen(false)}>
+                      <Button variant="outline" className="w-full border-neutral-300 font-bold uppercase text-xs py-5 gap-2">
+                        <LayoutDashboard className="h-4 w-4" />
+                        Admin Dashboard
+                      </Button>
+                    </Link>
+                    <Button onClick={() => { setIsOpen(false); handleAdminLogout(); }} variant="ghost" className="w-full text-neutral-500 font-bold uppercase text-xs gap-2 py-5">
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </Button>
+                  </>
+                ) : voterToken ? (
+                  <>
+                    <Link to="/dashboard/voter" onClick={() => setIsOpen(false)}>
+                      <Button variant="outline" className="w-full border-neutral-300 font-bold uppercase text-xs py-5 gap-2">
+                        <User className="h-4 w-4" />
+                        User Profile
+                      </Button>
+                    </Link>
+                    <Button onClick={() => { setIsOpen(false); handleVoterLogout(); }} variant="ghost" className="w-full text-neutral-500 font-bold uppercase text-xs gap-2 py-5">
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/login" onClick={() => setIsOpen(false)}>
+                      <Button
+                        variant="outline"
+                        className="w-full border-neutral-300 font-bold uppercase text-xs py-5"
+                      >
+                        Voter Login
+                      </Button>
+                    </Link>
+
+                    {/* Admin Option in Mobile Menu */}
+                    <Link to="/admin/login" onClick={() => setIsOpen(false)}>
+                      <Button
+                        variant="ghost"
+                        className="w-full text-neutral-500 font-bold uppercase text-[10px] gap-2"
+                      >
+                        <LayoutDashboard className="h-4 w-4" />
+                        Administrative Portal
+                      </Button>
+                    </Link>
+
+                    <Link to="/register" onClick={() => setIsOpen(false)}>
+                      <Button className="w-full bg-primary-700 text-white font-bold uppercase text-xs py-5">
+                        Register to Vote
+                      </Button>
+                    </Link>
+                  </>
+                )}
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+      </div>
+    </header>
+  );
+}
